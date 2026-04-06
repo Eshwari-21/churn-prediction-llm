@@ -1,44 +1,42 @@
+
 from google import genai
-import os
-from dotenv import load_dotenv
-import time
 
-load_dotenv()
-
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
+# 🔥 PUT YOUR REAL API KEY
+client = genai.Client(api_key="AIzaSyDD3OhLZgae-XHKaEZC1gwf7I3lkePRcM4")
 def generate_strategy(data, prob, risk):
-
-    prompt = f"""
-    A Netflix user has churn probability {prob} (Risk: {risk}).
-
-    Generate exactly 3 retention strategies.
-    """
-
     try:
+        prompt = f"""
+        Customer churn probability: {prob}
+        Risk: {risk}
+        Data: {data}
+
+        Suggest 3 short retention strategies.
+        """
+
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.0-flash",
             contents=prompt
         )
-        return response.text
+
+        text = response.text
+
+        if not text:
+            raise Exception("Empty response")
+
+        strategies = [
+            line.replace("-", "").strip()
+            for line in text.split("\n")
+            if line.strip()
+        ]
+
+        return strategies[:3]
 
     except Exception as e:
-        print("Gemini Error:", e)
+        print("LLM ERROR:", e)
 
-        # 🔥 HANDLE QUOTA ERROR
-        if "429" in str(e):
-            time.sleep(4)   # wait before retry
-
-            try:
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=prompt
-                )
-                return response.text
-            except:
-                pass
-
-        # 🔥 FINAL FALLBACK (only if quota exceeded)
-        return """1. Offer personalized discount
-2. Recommend trending content
-3. Improve engagement via notifications"""
+        # fallback (VERY IMPORTANT)
+        return [
+            "Offer discount",
+            "Send personalized recommendations",
+            "Provide loyalty rewards"
+        ]

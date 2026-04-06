@@ -1,18 +1,8 @@
-def estimate_effect(data, prob):
+def calculate_impact(prob, strategies):
+    improvement = 0.05 * len(strategies)
 
-    watch_hours = data.get("watch_hours", 0)
-    last_login = data.get("last_login_days", 0)
+    new_prob = max(prob - improvement, 0)
 
-    if watch_hours < 5:
-        reduction = 0.35
-    elif last_login > 10:
-        reduction = 0.25
-    else:
-        reduction = 0.15
+    impact = f"Churn reduced by {round(improvement * 100, 2)}%"
 
-    new_prob = prob * (1 - reduction)
-
-    return {
-        "new_probability": round(new_prob, 3),
-        "improvement": reduction
-    }
+    return new_prob, impact

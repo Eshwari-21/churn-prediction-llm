@@ -1,55 +1,77 @@
-from flask import Flask, request, jsonify
-import joblib
-from feature_engineering import preprocess
-from gemini_engine import generate_strategy
-from impact_engine import estimate_impact
+@app.route("/batch_predict", methods=["POST"])
+def batch_predict():
+    global llm_calls
 
-app = Flask(__name__)
+    try:
+        file = request.files["file"]
+        df = pd.read_csv(file)
 
-model = joblib.load("../models/churn_model.pkl")
+        results = []
 
+        high, medium, low = 0, 0, 0
+        total_prob = 0
+        all_drivers = []
 
-def get_risk(prob):
-    if prob > 0.7:
-        return "High"
-    elif prob > 0.4:
-        return "Medium"
-    return "Low"
+        for _, row in df.iterrows():
+            data = row.to_dict()
 
+            input_df = pd.DataFrame([data])
+            input_df = input_df.reindex(columns=columns, fill_value=0)
 
-@app.route("/predict", methods=["POST"])
-def predict():
-    data = request.json
+            scaled = scaler.transform(input_df)
+            prob = model.predict_proba(scaled)[0][1]
 
-    processed = preprocess(data)
-    prob = model.predict_proba([processed])[0][1]
+            risk = get_risk(prob)
+            drivers = get_drivers(data)
 
-    risk = get_risk(prob)
+            total_prob += prob
+            all_drivers.extend(drivers)
 
-    result = {
-        "churn_probability": round(prob, 3),
-        "risk": risk
-    }
+            if risk == "High":
+                high += 1
+            elif risk == "Medium":
+                medium += 1
+            else:
+                low += 1
 
-    if prob > 0.4:
-        result["strategy"] = generate_strategy(data, prob, risk)
-        result["after_strategy"] = estimate_impact(data, prob)
+            # 🔥 Only few LLM calls
+            if prob > 0.5 and llm_calls < 5:
+                strategy = generate_strategy(data, prob, risk)
+                llm_calls += 1
+            else:
+                strategy = ["Low priority"]
 
-    return jsonify(result)
+            results.append({
+                "probability": float(prob),
+                "risk": risk,
+                "drivers": drivers,
+                "strategy": strategy
+            })
 
+        # 🔥 SUMMARY
+        avg_prob = total_prob / len(df)
 
-@app.route("/batch", methods=["POST"])
-def batch():
-    file = request.files["file"]
-    key_area = request.args.get("key_area")
+        top_drivers = list(set(all_drivers))[:5]
 
-    path = "temp.csv"
-    file.save(path)
+        # 🔥 ONE LLM CALL FOR WHOLE DATA
+        summary_strategy = generate_strategy(
+            {"drivers": top_drivers},
+            avg_prob,
+            "Mixed"
+        )
 
-    batch_predict(path, key_area)
+        return jsonify({
+            "individual": results,
+            "summary": {
+                "total_users": len(df),
+                "high_risk": high,
+                "medium_risk": medium,
+                "low_risk": low,
+                "average_probability": avg_prob,
+                "top_drivers": top_drivers,
+                "overall_strategy": summary_strategy
+            }
+        })
 
-    return {"message": "Batch completed. Check output.csv"}
-
-
-if __name__ == "__main__":
-    app.run(debug=True)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

@@ -1,41 +1,47 @@
 import pandas as pd
-import joblib
+import pickle
+import os
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler
 
-# Load dataset
-df = pd.read_csv("../data/netflix_customer_churn.csv")
+# Correct path
+file_path = os.path.join("..", "data", "netflix_customer_churn.csv")
 
-# Drop ID
-df = df.drop("customer_id", axis=1)
+df = pd.read_csv(file_path)
 
-# Target
-y = df["churned"]
-X = df.drop("churned", axis=1)
+print("Columns:", df.columns)
 
-# Encode categorical
+# Target column
+target = "churned"
+
+# Drop useless column
+if "customer_id" in df.columns:
+    df = df.drop(columns=["customer_id"])
+
+# Features & target
+X = df.drop(target, axis=1)
+y = df[target]
+
+# Convert categorical → numeric
 X = pd.get_dummies(X)
 
 # Save columns
-joblib.dump(X.columns, "../models/columns.pkl")
-
-# Scale
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
-
-joblib.dump(scaler, "../models/scaler.pkl")
+os.makedirs("models", exist_ok=True)
+pickle.dump(X.columns, open("models/columns.pkl", "wb"))
 
 # Split
 X_train, X_test, y_train, y_test = train_test_split(
-    X_scaled, y, test_size=0.2, random_state=42
+    X, y, test_size=0.2, random_state=42
 )
 
-# Train model
-model = RandomForestClassifier()
+# Model (NO SCALING)
+model = RandomForestClassifier(n_estimators=100)
 model.fit(X_train, y_train)
 
-# Save model
-joblib.dump(model, "../models/churn_model.pkl")
+# Accuracy
+print("Accuracy:", model.score(X_test, y_test))
 
-print("✅ Model trained and saved!")
+# Save model
+pickle.dump(model, open("models/churn_model.pkl", "wb"))
+
+print("✅ Model trained successfully")

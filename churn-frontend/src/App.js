@@ -1,103 +1,168 @@
 import React, { useState } from "react";
 import axios from "axios";
-import { LineChart, Line, XAxis, YAxis, Tooltip } from "recharts";
+import { Pie } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  ArcElement,
+  Tooltip,
+  Legend
+} from "chart.js";
+
+ChartJS.register(ArcElement, Tooltip, Legend);
 
 function App() {
-
   const [formData, setFormData] = useState({
     last_login_days: "",
     watch_hours: "",
-    number_of_profiles: "",
-    avg_watch_time_per_day: "",
+    profiles: "",
+    avg_watch_time: "",
     monthly_fee: ""
   });
 
   const [result, setResult] = useState(null);
+  const [file, setFile] = useState(null);
+  const [batchResult, setBatchResult] = useState(null);
 
   const handleChange = (e) => {
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value
+      [e.target.name]: Number(e.target.value)
     });
   };
 
-  const handleSubmit = async () => {
+  const handlePredict = async () => {
     try {
-      const response = await axios.post(
-        "http://127.0.0.1:5000/predict",
-        {
-          last_login_days: Number(formData.last_login_days),
-          watch_hours: Number(formData.watch_hours),
-          number_of_profiles: Number(formData.number_of_profiles),
-          avg_watch_time_per_day: Number(formData.avg_watch_time_per_day),
-          monthly_fee: Number(formData.monthly_fee)
-        }
+      const res = await axios.post("http://localhost:5000/predict", formData);
+      setResult(res.data);
+    } catch {
+      alert("Backend not running!");
+    }
+  };
+
+  const handleBatch = async () => {
+    const fd = new FormData();
+    fd.append("file", file);
+
+    try {
+      const res = await axios.post(
+        "http://localhost:5000/batch_predict",
+        fd
       );
-
-      setResult(response.data);
-
-    } catch (error) {
-      alert("Backend error");
+      setBatchResult(res.data);
+    } catch {
+      alert("Batch failed!");
     }
   };
 
   return (
-    <div style={{ padding: "40px" }}>
-
+    <div style={{ padding: 20 }}>
       <h2>Netflix Churn Prediction</h2>
 
-      <input name="last_login_days" placeholder="Last Login Days" onChange={handleChange} /><br/><br/>
-      <input name="watch_hours" placeholder="Watch Hours" onChange={handleChange} /><br/><br/>
-      <input name="number_of_profiles" placeholder="Profiles" onChange={handleChange} /><br/><br/>
-      <input name="avg_watch_time_per_day" placeholder="Avg Watch Time" onChange={handleChange} /><br/><br/>
-      <input name="monthly_fee" placeholder="Monthly Fee" onChange={handleChange} /><br/><br/>
+      {/* 🔹 SINGLE PREDICTION */}
+      <h3>Single Prediction</h3>
+      {Object.keys(formData).map((k) => (
+        <input key={k} name={k} placeholder={k} onChange={handleChange} />
+      ))}
 
-      <button onClick={handleSubmit}>Predict</button>
+      <br /><br />
+      <button onClick={handlePredict}>Predict</button>
 
       {result && (
-        <div style={{ marginTop: "30px" }}>
-
-          <h3>Results</h3>
-
-          <p><b>Churn Probability:</b> {result.churn_probability}</p>
+        <div style={{ marginTop: 20 }}>
+          <p><b>Probability:</b> {result.probability.toFixed(3)}</p>
           <p><b>Risk:</b> {result.risk}</p>
 
-          <h4>Why churn risk?</h4>
+          <b>Strategies (LLM):</b>
           <ul>
-            {result.feature_reasons.map((r, i) => (
-              <li key={i}>{r}</li>
+            {result.strategy.map((s, i) => (
+              <li key={i}>{s}</li>
             ))}
           </ul>
 
-          {result.strategy ? (
-            <>
-              <h4>Retention Strategy</h4>
-              <p>{result.strategy}</p>
-            </>
-          ) : (
-            <p>No strategy needed (Low Risk)</p>
-          )}
-
-          {result.after_strategy ? (
-            <>
-              <h4>Impact Analysis</h4>
-              <LineChart width={300} height={200} data={[
-                { name: "Before", value: result.churn_probability },
-                { name: "After", value: result.after_strategy.new_probability }
-              ]}>
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip />
-                <Line type="monotone" dataKey="value" />
-              </LineChart>
-            </>
-          ) : (
-            <p>No impact analysis available</p>
-          )}
-
+          <p><b>Impact:</b> {result.impact}</p>
         </div>
       )}
 
+      <hr />
+
+      {/* 🔹 BATCH */}
+      <h3>Batch Prediction</h3>
+
+      <input type="file" onChange={(e) => setFile(e.target.files[0])} />
+      <br /><br />
+      <button onClick={handleBatch}>Run Batch</button>
+
+      {/* 🔹 DASHBOARD SUMMARY */}
+      {batchResult?.summary && (
+        <div style={{ marginTop: 30 }}>
+          <h2>📊 Dashboard Summary</h2>
+
+          <div style={{
+            display: "flex",
+            gap: "20px",
+            marginTop: "10px",
+            fontWeight: "bold"
+          }}>
+            <div>👥 Total: {batchResult.summary.total_users}</div>
+            <div>🔴 High: {batchResult.summary.high_risk}</div>
+            <div>🟡 Medium: {batchResult.summary.medium_risk}</div>
+            <div>🟢 Low: {batchResult.summary.low_risk}</div>
+          </div>
+
+          <p style={{ marginTop: 10 }}>
+            Avg Probability: {batchResult.summary.average_probability.toFixed(3)}
+          </p>
+
+          {/* 🔥 LLM STRATEGY (CHECK THIS) */}
+          {batchResult.summary.overall_strategy && (
+            <>
+              <b>LLM Strategies:</b>
+              <ul>
+                {batchResult.summary.overall_strategy.map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* 🔹 PIE CHART */}
+      {batchResult?.summary && (
+        <div style={{ marginTop: 30 }}>
+          <h3 style={{ textAlign: "center" }}>Risk Distribution</h3>
+
+          <div style={{
+            width: "350px",
+            height: "350px",
+            margin: "auto"
+          }}>
+            <Pie
+              data={{
+                labels: ["High", "Medium", "Low"],
+                datasets: [
+                  {
+                    data: [
+                      batchResult.summary.high_risk,
+                      batchResult.summary.medium_risk,
+                      batchResult.summary.low_risk
+                    ],
+                    backgroundColor: [
+                      "#ff4d4d",
+                      "#ffc107",
+                      "#28a745"
+                    ]
+                  }
+                ]
+              }}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
