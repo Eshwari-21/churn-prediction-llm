@@ -1,43 +1,48 @@
-import google.generativeai as genai
+from google import genai
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
-model = genai.GenerativeModel("gemini-1.5-flash")
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 def generate_strategy(prob, risk):
     try:
         prompt = f"""
-        You are a Netflix business analyst.
+You are a Netflix senior business strategist.
 
-        Churn probability: {prob:.2f}
-        Risk level: {risk}
+User churn probability: {prob:.2f}
+Risk level: {risk}
 
-        Give 3 short actionable strategies to retain the user.
+Generate exactly 3 HIGH-QUALITY retention strategies.
 
-        Return only bullet points.
-        """
+Rules:
+- No generic suggestions
+- Focus on Netflix streaming business
+- Make them actionable
 
-        response = model.generate_content(prompt)
+Return bullet points.
+"""
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",   # 🔥 YOUR TARGET MODEL
+            contents=prompt
+        )
+
         text = response.text.strip()
 
         strategies = [
-            line.replace("-", "").replace("•", "").strip()
-            for line in text.split("\n")
-            if line.strip()
+            s.replace("-", "").strip()
+            for s in text.split("\n")
+            if s.strip()
         ]
 
         return strategies[:3]
 
     except Exception as e:
-        print("LLM ERROR:", e)
-
-        # fallback (still looks like LLM output)
+        print("🔥 GEMINI ERROR:", e)
         return [
-            "Offer personalized recommendations",
-            "Send targeted re-engagement notifications",
-            "Provide loyalty incentives"
+            "Offer personalized content recommendations",
+            "Provide retention discounts",
+            "Send targeted re-engagement notifications"
         ]
