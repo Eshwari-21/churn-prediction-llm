@@ -1,126 +1,121 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import pandas as pd
 import pickle
-from flask_cors import CORS
+from gemini_engine import generate_strategy
 
 app = Flask(__name__)
 CORS(app)
 
-# Load model
-model = pickle.load(open("models/churn_model.pkl", "rb"))
-columns = pickle.load(open("models/columns.pkl", "rb"))
+# ================= LOAD MODEL + COLUMNS =================
+try:
+    model = pickle.load(open("models/churn_model.pkl", "rb"))
+    columns = pickle.load(open("models/columns.pkl", "rb"))
+    print("✅ Model & columns loaded successfully")
+except Exception as e:
+    print("❌ Error loading model:", e)
 
-# Risk logic
-def get_risk(prob):
-    if prob > 0.7:
-        return "High"
-    elif prob > 0.4:
-        return "Medium"
-    return "Low"
 
-# Drivers logic
-def get_drivers(data):
-    drivers = []
-    if data.get("last_login_days", 0) > 30:
-        drivers.append("User inactive")
-    if data.get("watch_hours", 0) < 5:
-        drivers.append("Low engagement")
-    if data.get("monthly_fee", 0) > 800:
-        drivers.append("High cost")
-    return drivers
-
-# Dummy LLM (safe version to avoid quota issues)
-def generate_strategy(prob, risk):
-    if risk == "High":
-        return ["Give discount", "Send re-engagement emails"]
-    elif risk == "Medium":
-        return ["Offer recommendations", "Push notifications"]
-    else:
-        return ["Customer safe — no action needed"]
-
-# SINGLE PREDICT
+# ================= SINGLE PREDICTION =================
 @app.route("/predict", methods=["POST"])
 def predict():
-    data = request.json
+    try:
+        data = request.json
 
-    df = pd.DataFrame([data])
-    df = pd.get_dummies(df)
-    df = df.reindex(columns=columns, fill_value=0)
+        # Convert to DataFrame
+        df = pd.DataFrame([data])
 
-    prob = model.predict_proba(df)[0][1]
+        # 🔥 FIX: add missing columns
+        for col in columns:
+            if col not in df:
+                df[col] = 0
 
-    risk = get_risk(prob)
-    drivers = get_drivers(data)
-    strategy = generate_strategy(prob, risk)
+        # 🔥 FIX: keep correct order
+        df = df[columns]
 
-    improved_prob = prob * 0.7
-    impact = f"Churn reduced by {(prob - improved_prob)*100:.1f}%"
+        # Predict
+        prob = float(model.predict_proba(df)[0][1])
 
-    return jsonify({
-        "probability": float(prob),
-        "risk": risk,
-        "drivers": drivers,
-        "strategy": strategy,
-        "improved_probability": float(improved_prob),
-        "impact": impact
-    })
+        # Safe probability
+        prob = max(0, min(prob, 1))
 
-# BATCH PREDICT
-@app.route("/batch_predict", methods=["POST"])
-def batch_predict():
-    file = request.files["file"]
-    df = pd.read_csv(file)
+        # Risk
+        risk = "High" if prob > 0.7 else "Medium" if prob > 0.4 else "Low"
 
-    results = []
+        # 🔥 ALWAYS LLM
+        strategy = generate_strategy(prob, risk)
 
-    high = medium = low = 0
-    total_prob = 0
-    all_drivers = []
+        # Impact
+        improved_prob = max(prob - 0.2, 0)
+        impact = f"Churn reduced by {round((prob - improved_prob) * 100, 1)}%"
 
-    for _, row in df.iterrows():
-        data = row.to_dict()
-
-        input_df = pd.DataFrame([data])
-        input_df = pd.get_dummies(input_df)
-        input_df = input_df.reindex(columns=columns, fill_value=0)
-
-        prob = model.predict_proba(input_df)[0][1]
-
-        risk = get_risk(prob)
-        drivers = get_drivers(data)
-
-        total_prob += prob
-        all_drivers.extend(drivers)
-
-        if risk == "High":
-            high += 1
-        elif risk == "Medium":
-            medium += 1
-        else:
-            low += 1
-
-        results.append({
-            "probability": float(prob),
+        return jsonify({
+            "probability": prob,
             "risk": risk,
-            "strategy": generate_strategy(prob, risk)
+            "strategy": strategy,
+            "improved_probability": improved_prob,
+            "impact": impact
         })
 
-    avg_prob = total_prob / len(df)
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
-    summary = {
-        "total_users": len(df),
-        "high_risk": high,
-        "medium_risk": medium,
-        "low_risk": low,
-        "average_probability": float(avg_prob),
-        "top_drivers": list(set(all_drivers))
-    }
 
-    return jsonify({
-        "individual": results,
-        "summary": summary
-    })
+# ================= BATCH PREDICTION =================
+@app.route("/batch_predict", methods=["POST"])
+def batch_predict():
+    try:
+        file = request.files["file"]
+        df = pd.read_csv(file)
 
+        # 🔥 FIX: add missing columns
+        for col in columns:
+            if col not in df:
+                df[col] = 0
+
+        # 🔥 FIX: correct order
+        df = df[columns]
+
+        # Predict
+        probs = model.predict_proba(df)[:, 1]
+
+        df["prob"] = probs
+        df["prob"] = df["prob"].clip(0, 1)
+
+        # Risk classification
+        df["risk"] = df["prob"].apply(
+            lambda x: "High" if x > 0.7 else "Medium" if x > 0.4 else "Low"
+        )
+
+        # Summary
+        total = len(df)
+        high = int((df["risk"] == "High").sum())
+        medium = int((df["risk"] == "Medium").sum())
+        low = int((df["risk"] == "Low").sum())
+        avg_prob = float(df["prob"].mean())
+
+        # 🔥 LLM for batch
+        overall_strategy = generate_strategy(avg_prob, "Mixed")
+
+        improved_prob = max(avg_prob - 0.2, 0)
+        impact = f"Churn reduced by {round((avg_prob - improved_prob) * 100, 1)}%"
+
+        return jsonify({
+            "summary": {
+                "total_users": total,
+                "high_risk": high,
+                "medium_risk": medium,
+                "low_risk": low,
+                "average_probability": avg_prob,
+                "overall_strategy": overall_strategy,
+                "impact": impact
+            }
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
+# ================= RUN SERVER =================
 if __name__ == "__main__":
-    app.run(debug=True)
-    
+    app.run(debug=True, port=5000)
